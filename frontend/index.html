@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>RAG Study Companion</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:        #0B1020;
+  --bg2:       #151B2E;
+  --bg3:       #1C2540;
+  --accent:    #4F8CFF;
+  --cyan:      #00D4FF;
+  --success:   #00C853;
+  --warn:      #FFB300;
+  --danger:    #FF4444;
+  --text:      #E8ECF3;
+  --muted:     #5A6480;
+  --border:    rgba(79,140,255,0.12);
+  --glow:      rgba(79,140,255,0.25);
+}
+
+body{
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── KNOWLEDGE GRAPH CANVAS ─────────────────────────────────── */
+#kgCanvas{
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ── TOPBAR ──────────────────────────────────────────────────── */
+.topbar{
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  background: rgba(11,16,32,0.85);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  flex-shrink: 0;
+}
+.brand{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-icon{
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--accent), var(--cyan));
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.brand-name{
+  font-family: 'Syne', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.brand-tag{
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+.status-bar{
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.status-chip{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: rgba(0,200,83,0.08);
+  border: 1px solid rgba(0,200,83,0.2);
+  font-size: 11px;
+  color: var(--success);
+  font-family: 'JetBrains Mono', monospace;
+}
+.status-chip.offline{
+  background: rgba(255,68,68,0.08);
+  border-color: rgba(255,68,68,0.2);
+  color: var(--danger);
+}
+.pulse{
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 2s infinite;
+}
+.pulse.off{ background: var(--danger); animation: none; }
+@keyframes pulse{
+  0%,100%{ opacity:1; transform:scale(1); }
+  50%{ opacity:0.4; transform:scale(0.8); }
+}
+.stat-chip{
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  padding: 4px 10px;
+  background: var(--bg2);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.stat-chip span{ color: var(--accent); }
+
+/* ── INTERNET STATUS CHIP ────────────────────────────────── */
+#netChip{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  transition: all 0.4s ease;
+}
+#netChip.online{
+  background: rgba(0,200,83,0.08);
+  border-color: rgba(0,200,83,0.2);
+  color: var(--success);
+}
+#netChip.offline{
+  background: rgba(255,68,68,0.08);
+  border-color: rgba(255,68,68,0.2);
+  color: var(--danger);
+}
+
+/* ── MAIN LAYOUT ─────────────────────────────────────────────── */
+.layout{
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── LEFT PANEL ──────────────────────────────────────────────── */
+.left-panel{
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: rgba(21,27,46,0.7);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panel-header{
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* Upload zone */
+.upload-zone{
+  margin: 14px;
+  border: 1.5px dashed rgba(79,140,255,0.3);
+  border-radius: 12px;
+  padding: 18px 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  background: rgba(79,140,255,0.03);
+  position: relative;
+  overflow: hidden;
+}
+.upload-zone::before{
+  content:'';
+  position:absolute;
+  inset:0;
+  background: linear-gradient(135deg, rgba(79,140,255,0.05) 0%, transparent 60%);
+  opacity:0;
+  transition: opacity 0.25s;
+}
+.upload-zone:hover{ border-color: rgba(79,140,255,0.6); }
+.upload-zone:hover::before{ opacity:1; }
+.upload-zone.dragover{
+  border-color: var(--accent);
+  background: rgba(79,140,255,0.08);
+}
+.upload-icon{
+  font-size: 26px;
+  margin-bottom: 8px;
+  display: block;
+}
+.upload-text{
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.upload-text strong{ color: var(--accent); font-weight: 500; }
+#fileInput{ display:none; }
+
+/* Ingestion progress panel */
+.ingest-panel{
+  margin: 0 14px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: none;
+}
+.ingest-panel.active{ display: block; }
+.ingest-header{
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ingest-spinner{
+  width: 10px; height: 10px;
+  border: 1.5px solid rgba(79,140,255,0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin{ to{ transform: rotate(360deg); } }
+.ingest-steps{
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ingest-step{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  transition: color 0.3s;
+}
+.ingest-step.active{ color: var(--cyan); }
+.ingest-step.done{ color: var(--success); }
+.step-dot{
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.ingest-step.active .step-dot{ background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.ingest-step.done .step-dot{ background: var(--success); }
+.ingest-bar-wrap{
+  padding: 8px 14px 12px;
+}
+.ingest-bar{
+  height: 3px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ingest-bar-fill{
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 8px var(--accent);
+}
+.ingest-count{
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+/* Doc list */
+.doc-list{
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.doc-empty{
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 20px 0;
+  font-style: italic;
+  font-family: 'JetBrains Mono', monospace;
+}
+.doc-item{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.doc-item:hover{
+  border-color: rgba(79,140,255,0.3);
+  background: rgba(79,140,255,0.06);
+}
+.doc-dot{
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.doc-name{
+  font-size: 11px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-chunks{
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+}
+
+/* Vector stats */
+.vec-stats{
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.vec-stat{
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.vec-stat-label{
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 3px;
+}
+.vec-stat-value{
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Syne', sans-serif;
+  color: var(--accent);
+}
+
+/* Clear btn */
+.btn-clear{
+  margin: 0 14px 14px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,68,68,0.2);
+  background: rgba(255,68,68,0.05);
+  color: var(--danger);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.06em;
+}
+.btn-clear:hover{
+  background: rgba(255,68,68,0.12);
+  border-color: rgba(255,68,68,0.4);
+}
+
+/* ── CHAT AREA ────────────────────────────────────────────────── */
+.chat-area{
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages{
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79,140,255,0.15) transparent;
+}
+.messages::-webkit-scrollbar{ width: 4px; }
+.messages::-webkit-scrollbar-thumb{
+  background: rgba(79,140,255,0.15);
+  border-radius: 2px;
+}
+
+/* Welcome */
+.welcome{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  padding: 60px 40px;
+  min-height: 300px;
+}
+.welcome-icon{
+  font-size: 42px;
+  margin-bottom: 18px;
+  filter: drop-shadow(0 0 20px rgba(79,140,255,0.5));
+}
+.welcome-title{
+  font-family: 'Syne', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 10px;
+  letter-spacing: -0.02em;
+}
+.welcome-title span{
+  background: linear-gradient(135deg, var(--accent), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.welcome-sub{
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.9;
+  max-width: 420px;
+  margin-bottom: 24px;
+}
+.welcome-chips{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.welcome-chip{
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.welcome-chip:hover{
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(79,140,255,0.06);
+}
+
+/* Messages */
+.msg{ display: flex; flex-direction: column; gap: 6px; max-width: 78%; }
+.msg.user{ align-self: flex-end; }
+.msg.bot{ align-self: flex-start; }
+.msg-role{
+  font-size: 9.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 0 4px;
+}
+.msg.user .msg-role{ text-align: right; }
+
+.bubble{
+  padding: 13px 17px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.85;
+}
+.msg.user .bubble{
+  background: linear-gradient(135deg, rgba(79,140,255,0.18), rgba(0,212,255,0.10));
+  border: 1px solid rgba(79,140,255,0.25);
+  border-top-right-radius: 4px;
+  color: #c8d8ff;
+}
+.msg.bot .bubble{
+  background: rgba(21,27,46,0.8);
+  border: 1px solid var(--border);
+  border-top-left-radius: 4px;
+  color: var(--text);
+  backdrop-filter: blur(8px);
+}
+
+/* Retrieval visualization */
+.retrieval-vis{
+  margin-top: 8px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.retrieval-header{
+  padding: 8px 12px;
+  font-size: 9.5px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--cyan);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.08em;
+}
+.source-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(79,140,255,0.05);
+}
+.source-row:last-child{ border-bottom: none; }
+.source-bar-wrap{
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.source-bar{
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+  box-shadow: 0 0 6px var(--accent);
+}
+.source-file{
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.source-pct{
+  font-size: 10px;
+  color: var(--cyan);
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+}
+.chunks-badge{
+  font-size: 9px;
+  color: var(--muted);
+  padding: 6px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  border-top: 1px solid var(--border);
+}
+
+/* Thinking indicator */
+.thinking{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 17px;
+  background: rgba(21,27,46,0.8);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  border-top-left-radius: 4px;
+}
+.thinking-dots{
+  display: flex;
+  gap: 4px;
+}
+.thinking-dots span{
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tdot 1.2s infinite;
+}
+.thinking-dots span:nth-child(2){ animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3){ animation-delay: 0.4s; }
+@keyframes tdot{
+  0%,60%,100%{ transform: translateY(0); opacity:0.4; }
+  30%{ transform: translateY(-5px); opacity:1; }
+}
+.thinking-label{
+  font-size: 11px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── INPUT ────────────────────────────────────────────────────── */
+.input-area{
+  padding: 16px 32px 20px;
+  border-top: 1px solid var(--border);
+  background: rgba(11,16,32,0.85);
+  backdrop-filter: blur(16px);
+  flex-shrink: 0;
+}
+.input-wrap{
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px 10px 16px;
+  transition: border-color 0.2s;
+}
+.input-wrap:focus-within{
+  border-color: rgba(79,140,255,0.4);
+  box-shadow: 0 0 0 3px rgba(79,140,255,0.06);
+}
+#questionInput{
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 13.5px;
+  font-weight: 300;
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
+  line-height: 1.6;
+}
+#questionInput::placeholder{ color: var(--muted); }
+.send-btn{
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--cyan));
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.send-btn:hover{ transform: scale(1.06); box-shadow: 0 4px 16px rgba(79,140,255,0.4); }
+.send-btn:disabled{ opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+.input-hint{
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 7px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 0 4px;
+}
+
+/* ── TOAST ────────────────────────────────────────────────────── */
+.toast{
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  transform: translateY(80px);
+  transition: transform 0.3s ease;
+  z-index: 99;
+  font-family: 'JetBrains Mono', monospace;
+  backdrop-filter: blur(12px);
+  max-width: 320px;
+}
+.toast.show{ transform: translateY(0); }
+.toast.success{ border-color: rgba(0,200,83,0.3); color: var(--success); }
+.toast.error{ border-color: rgba(255,68,68,0.3); color: var(--danger); }
+</style>
+</head>
+<body>
+
+<canvas id="kgCanvas"></canvas>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-icon">🧠</div>
+    <div>
+      <div class="brand-name">RAG Study Companion</div>
+      <div class="brand-tag">Local · Private · Llama3</div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div id="netChip" class="stat-chip online">
+      <div class="pulse" id="netPulse"></div>
+      <span id="netText">Internet: Online</span>
+    </div>
+    <div class="stat-chip">Chunks: <span id="totalChunks">0</span></div>
+    <div class="stat-chip">Docs: <span id="totalDocs">0</span></div>
+    <div class="status-chip" id="statusChip">
+      <div class="pulse" id="statusPulse"></div>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="panel-header">Documents</div>
+
+    <!-- Upload zone -->
+    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+      <span class="upload-icon">📄</span>
+      <div class="upload-text">
+        <strong>Click to upload</strong> or drag a PDF<br>
+        <span style="font-size:10px;color:var(--muted)">Processed locally - fully private</span>
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept=".pdf" onchange="uploadFile(this.files[0])"/>
+
+    <!-- Ingestion progress panel -->
+    <div class="ingest-panel" id="ingestPanel">
+      <div class="ingest-header">
+        <div class="ingest-spinner" id="ingestSpinner"></div>
+        <span id="ingestFileName">Processing...</span>
+      </div>
+      <div class="ingest-steps">
+        <div class="ingest-step" id="step1"><div class="step-dot"></div>Extracting text from PDF</div>
+        <div class="ingest-step" id="step2"><div class="step-dot"></div>Splitting into chunks</div>
+        <div class="ingest-step" id="step3"><div class="step-dot"></div>Generating embeddings</div>
+        <div class="ingest-step" id="step4"><div class="step-dot"></div>Storing in ChromaDB</div>
+        <div class="ingest-step" id="step5"><div class="step-dot"></div>Indexing complete</div>
+      </div>
+      <div class="ingest-bar-wrap">
+        <div class="ingest-bar"><div class="ingest-bar-fill" id="ingestFill"></div></div>
+        <div class="ingest-count" id="ingestCount">Preparing...</div>
+      </div>
+    </div>
+
+    <!-- Doc list -->
+    <div class="panel-header" style="margin-top:4px;">Knowledge Base</div>
+    <div class="doc-list" id="docList">
+      <div class="doc-empty" id="docEmpty">No documents indexed yet</div>
+    </div>
+
+    <!-- Vector stats -->
+    <div class="vec-stats">
+      <div class="vec-stat">
+        <div class="vec-stat-label">Embed Model</div>
+        <div class="vec-stat-value" style="font-size:11px;color:var(--cyan)">nomic-embed</div>
+      </div>
+      <div class="vec-stat">
+        <div class="vec-stat-label">Dimensions</div>
+        <div class="vec-stat-value">768</div>
+      </div>
+      <div class="vec-stat">
+        <div class="vec-stat-label">Top-K</div>
+        <div class="vec-stat-value">5</div>
+      </div>
+      <div class="vec-stat">
+        <div class="vec-stat-label">Similarity</div>
+        <div class="vec-stat-value" style="font-size:11px;">Cosine</div>
+      </div>
+    </div>
+
+    <button class="btn-clear" onclick="clearDocs()">⌫ Clear knowledge base</button>
+  </div>
+
+  <!-- CHAT AREA -->
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">🧠</div>
+        <div class="welcome-title">Ask your <span>documents</span> anything</div>
+        <div class="welcome-sub">
+          Upload your study materials and ask questions.<br>
+          Every answer comes from your documents only -<br>
+          no hallucinations, sources always cited.
+        </div>
+        <div class="welcome-chips">
+          <div class="welcome-chip" onclick="setQ('What are the main topics covered?')">What are the main topics?</div>
+          <div class="welcome-chip" onclick="setQ('Summarize the key concepts')">Summarize key concepts</div>
+          <div class="welcome-chip" onclick="setQ('What is the most important concept explained?')">Most important concept</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea
+          id="questionInput"
+          placeholder="Ask anything about your documents..."
+          rows="1"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendQuestion()">➤</button>
+      </div>
+      <div class="input-hint">Enter to send · Shift+Enter for new line · answers from your docs only</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// KNOWLEDGE GRAPH BACKGROUND
+// ══════════════════════════════════════════════════════════════
+const canvas  = document.getElementById('kgCanvas');
+const ctx     = canvas.getContext('2d');
+let nodes     = [];
+let animFrame;
+let queryMode = false;
+let queryTimer= 0;
+
+function resizeCanvas(){
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function createNodes(count = 55){
+  nodes = [];
+  for(let i = 0; i < count; i++){
+    nodes.push({
+      x     : Math.random() * canvas.width,
+      y     : Math.random() * canvas.height,
+      vx    : (Math.random() - 0.5) * 0.3,
+      vy    : (Math.random() - 0.5) * 0.3,
+      r     : Math.random() * 2.5 + 1,
+      lit   : false,
+      alpha : Math.random() * 0.4 + 0.1,
+    });
+  }
+}
+createNodes();
+
+function drawKG(){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if(queryMode) queryTimer++;
+  if(queryTimer > 180){ queryMode = false; queryTimer = 0; nodes.forEach(n => n.lit = false); }
+
+  // Update positions
+  nodes.forEach(n => {
+    n.x += n.vx; n.y += n.vy;
+    if(n.x < 0 || n.x > canvas.width)  n.vx *= -1;
+    if(n.y < 0 || n.y > canvas.height) n.vy *= -1;
+  });
+
+  // Draw edges
+  for(let i = 0; i < nodes.length; i++){
+    for(let j = i+1; j < nodes.length; j++){
+      const dx = nodes[i].x - nodes[j].x;
+      const dy = nodes[i].y - nodes[j].y;
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      if(d < 140){
+        const bothLit = nodes[i].lit && nodes[j].lit;
+        const opacity = bothLit
+          ? 0.6 * (1 - d/140)
+          : 0.07 * (1 - d/140);
+
+        ctx.beginPath();
+        ctx.moveTo(nodes[i].x, nodes[i].y);
+        ctx.lineTo(nodes[j].x, nodes[j].y);
+
+        if(bothLit){
+          const grad = ctx.createLinearGradient(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+          grad.addColorStop(0, `rgba(79,140,255,${opacity})`);
+          grad.addColorStop(1, `rgba(0,212,255,${opacity})`);
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 1.2;
+        } else {
+          ctx.strokeStyle = `rgba(79,140,255,${opacity})`;
+          ctx.lineWidth = 0.6;
+        }
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Draw nodes
+  nodes.forEach(n => {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.lit ? n.r * 2.5 : n.r, 0, Math.PI * 2);
+
+    if(n.lit){
+      ctx.fillStyle = `rgba(0,212,255,0.9)`;
+      ctx.shadowBlur   = 16;
+      ctx.shadowColor  = '#00D4FF';
+    } else {
+      ctx.fillStyle = `rgba(79,140,255,${n.alpha})`;
+      ctx.shadowBlur   = 0;
+    }
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+
+  animFrame = requestAnimationFrame(drawKG);
+}
+drawKG();
+
+function triggerQueryAnimation(){
+  queryMode  = true;
+  queryTimer = 0;
+  // Light up random subset of nodes to simulate retrieval path
+  nodes.forEach(n => n.lit = false);
+  const litCount = Math.floor(nodes.length * 0.35);
+  const shuffled = [...nodes].sort(() => Math.random() - 0.5);
+  shuffled.slice(0, litCount).forEach(n => n.lit = true);
+}
+
+// ══════════════════════════════════════════════════════════════
+// DRAG AND DROP
+// ══════════════════════════════════════════════════════════════
+const uploadZone = document.getElementById('uploadZone');
+uploadZone.addEventListener('dragover',  e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', ()=> uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if(f) uploadFile(f);
+});
+
+// ══════════════════════════════════════════════════════════════
+// INGESTION STEPS ANIMATION
+// ══════════════════════════════════════════════════════════════
+let stepTimer = null;
+
+function startIngestAnimation(filename){
+  const panel = document.getElementById('ingestPanel');
+  document.getElementById('ingestFileName').textContent = filename.length > 24
+    ? filename.substring(0,22)+'...' : filename;
+  panel.classList.add('active');
+
+  // Reset all steps
+  for(let i=1;i<=5;i++){
+    const s = document.getElementById('step'+i);
+    s.className = 'ingest-step';
+  }
+  document.getElementById('ingestFill').style.width = '0%';
+  document.getElementById('ingestCount').textContent = 'Preparing...';
+
+  const steps = [
+    { id:'step1', pct:20, label:'Extracting text...' },
+    { id:'step2', pct:40, label:'Splitting chunks...' },
+    { id:'step3', pct:70, label:'Generating embeddings via Ollama...' },
+    { id:'step4', pct:90, label:'Storing in ChromaDB...' },
+  ];
+
+  let i = 0;
+  function nextStep(){
+    if(i > 0) document.getElementById(steps[i-1].id).className = 'ingest-step done';
+    if(i < steps.length){
+      document.getElementById(steps[i].id).className = 'ingest-step active';
+      document.getElementById('ingestFill').style.width = steps[i].pct + '%';
+      document.getElementById('ingestCount').textContent = steps[i].label;
+      i++;
+      stepTimer = setTimeout(nextStep, 1800 + Math.random()*1200);
+    }
+  }
+  nextStep();
+}
+
+function finishIngestAnimation(chunks){
+  clearTimeout(stepTimer);
+  for(let i=1;i<=4;i++) document.getElementById('step'+i).className = 'ingest-step done';
+  document.getElementById('step5').className = 'ingest-step done';
+  document.getElementById('ingestFill').style.width = '100%';
+  document.getElementById('ingestCount').textContent = `✓ ${chunks} chunks indexed successfully`;
+  document.getElementById('ingestSpinner').style.display = 'none';
+  setTimeout(()=>{
+    document.getElementById('ingestPanel').classList.remove('active');
+    document.getElementById('ingestSpinner').style.display = 'block';
+  }, 3000);
+}
+
+// ══════════════════════════════════════════════════════════════
+// UPLOAD
+// ══════════════════════════════════════════════════════════════
+async function uploadFile(file){
+  if(!file || !file.name.endsWith('.pdf')){ showToast('Please upload a PDF file', 'error'); return; }
+
+  startIngestAnimation(file.name);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try{
+    const r = await fetch('/api/upload', { method:'POST', body: formData });
+    const d = await r.json();
+    if(d.error){
+      showToast(d.error, 'error');
+      document.getElementById('ingestPanel').classList.remove('active');
+    } else {
+      finishIngestAnimation(d.chunks);
+      showToast(`Indexed ${d.chunks} chunks from ${file.name}`, 'success');
+      hideWelcome();
+      await loadStats();
+    }
+  } catch(e){
+    showToast('Upload failed - is the server running?', 'error');
+    document.getElementById('ingestPanel').classList.remove('active');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// STATS & DOCS
+// ══════════════════════════════════════════════════════════════
+async function loadStats(){
+  try{
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('totalChunks').textContent = d.total_chunks || 0;
+    document.getElementById('totalDocs').textContent   = (d.documents||[]).length;
+
+    const list  = document.getElementById('docList');
+    const empty = document.getElementById('docEmpty');
+    if(!d.documents || d.documents.length === 0){
+      empty.style.display = 'block';
+    } else {
+      empty.style.display = 'none';
+      list.innerHTML = '<div class="doc-empty" id="docEmpty" style="display:none"></div>';
+      d.documents.forEach(doc => {
+        const el = document.createElement('div');
+        el.className = 'doc-item';
+        el.innerHTML = `
+          <div class="doc-dot"></div>
+          <div class="doc-name" title="${doc}">${doc}</div>
+        `;
+        list.appendChild(el);
+      });
+    }
+  } catch(e){}
+}
+
+async function clearDocs(){
+  if(!confirm('Clear all indexed documents?')) return;
+  try{
+    await fetch('/api/clear', { method:'POST' });
+    await loadStats();
+    showToast('Knowledge base cleared', 'success');
+  } catch(e){ showToast('Failed to clear', 'error'); }
+}
+
+// ══════════════════════════════════════════════════════════════
+// STATUS CHECK
+// ══════════════════════════════════════════════════════════════
+async function checkStatus(){
+  try{
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const chip  = document.getElementById('statusChip');
+    const pulse = document.getElementById('statusPulse');
+    const text  = document.getElementById('statusText');
+    if(d.ollama){
+      chip.className  = 'status-chip';
+      pulse.className = 'pulse';
+      text.textContent= 'RAG Active';
+    } else {
+      chip.className  = 'status-chip offline';
+      pulse.className = 'pulse off';
+      text.textContent= 'Ollama Offline';
+    }
+  } catch(e){}
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHAT
+// ══════════════════════════════════════════════════════════════
+let isLoading = false;
+
+function hideWelcome(){
+  const w = document.getElementById('welcome');
+  if(w) w.style.display = 'none';
+}
+
+function setQ(q){
+  document.getElementById('questionInput').value = q;
+  document.getElementById('questionInput').focus();
+}
+
+function handleKey(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendQuestion(); }
+}
+
+function autoResize(el){
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+async function sendQuestion(){
+  if(isLoading) return;
+  const input    = document.getElementById('questionInput');
+  const question = input.value.trim();
+  if(!question) return;
+
+  hideWelcome();
+  isLoading = true;
+  document.getElementById('sendBtn').disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+
+  appendMsg('user', question);
+  const thinkId = appendThinking();
+  scrollBottom();
+
+  // Trigger knowledge graph animation
+  triggerQueryAnimation();
+
+  try{
+    const r = await fetch('/api/query', {
+      method :'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body   : JSON.stringify({ question }),
+    });
+    const d = await r.json();
+    removeEl(thinkId);
+
+    if(d.error){
+      appendMsg('bot', `Error: ${d.error}`, [], 0);
+    } else {
+      appendMsg('bot', d.answer, d.sources||[], d.chunks_used||0);
+    }
+  } catch(e){
+    removeEl(thinkId);
+    appendMsg('bot', 'Connection error - is the server running?', [], 0);
+  }
+
+  isLoading = false;
+  document.getElementById('sendBtn').disabled = false;
+  scrollBottom();
+}
+
+function appendMsg(role, text, sources=[], chunks=0){
+  const msgs = document.getElementById('messages');
+  const div  = document.createElement('div');
+  div.className = `msg ${role}`;
+
+  let sourcesHTML = '';
+  if(sources && sources.length > 0){
+    const unique = [...new Map(sources.map(s => [s.file, s])).values()];
+    sourcesHTML = `
+      <div class="retrieval-vis">
+        <div class="retrieval-header">⚡ Retrieved Sources</div>
+        ${unique.map(s => `
+          <div class="source-row">
+            <div class="source-file">${s.file}</div>
+            <div class="source-bar-wrap">
+              <div class="source-bar" style="width:${s.relevance||50}%"></div>
+            </div>
+            <div class="source-pct">${s.relevance||'-'}%</div>
+          </div>
+        `).join('')}
+        <div class="chunks-badge">${chunks} chunks retrieved · cosine similarity</div>
+      </div>`;
+  }
+
+  div.innerHTML = `
+    <div class="msg-role">${role === 'user' ? 'You' : 'Companion'}</div>
+    <div class="bubble">${escHtml(text)}</div>
+    ${sourcesHTML}
+  `;
+  msgs.appendChild(div);
+
+  // Animate source bars
+  setTimeout(()=>{
+    div.querySelectorAll('.source-bar').forEach(b => {
+      const w = b.style.width;
+      b.style.width = '0%';
+      setTimeout(()=>{ b.style.width = w; }, 50);
+    });
+  }, 100);
+}
+
+function appendThinking(){
+  const msgs = document.getElementById('messages');
+  const id   = 'think-' + Date.now();
+  const div  = document.createElement('div');
+  div.className = 'msg bot';
+  div.id = id;
+  div.innerHTML = `
+    <div class="msg-role">Companion</div>
+    <div class="thinking">
+      <div class="thinking-dots"><span></span><span></span><span></span></div>
+      <div class="thinking-label">Retrieving from knowledge base...</div>
+    </div>`;
+  msgs.appendChild(div);
+  return id;
+}
+
+function removeEl(id){ const el = document.getElementById(id); if(el) el.remove(); }
+function scrollBottom(){ const m = document.getElementById('messages'); m.scrollTop = m.scrollHeight; }
+function escHtml(t){
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br/>');
+}
+
+// ══════════════════════════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type=''){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> t.classList.remove('show'), 3500);
+}
+
+// ══════════════════════════════════════════════════════════════
+// INTERNET STATUS
+// ══════════════════════════════════════════════════════════════
+function updateNetStatus(){
+  const chip  = document.getElementById('netChip');
+  const pulse = document.getElementById('netPulse');
+  const text  = document.getElementById('netText');
+  if(navigator.onLine){
+    chip.className  = 'stat-chip online';
+    pulse.className = 'pulse';
+    text.textContent = 'Internet: Online';
+  } else {
+    chip.className  = 'stat-chip offline';
+    pulse.className = 'pulse off';
+    text.textContent = 'Internet: Offline';
+  }
+}
+window.addEventListener('online',  updateNetStatus);
+window.addEventListener('offline', updateNetStatus);
+
+// ══════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════
+window.onload = async ()=>{
+  updateNetStatus();
+  await checkStatus();
+  await loadStats();
+  setInterval(checkStatus, 15000);
+  setInterval(loadStats, 8000);
+};
+</script>
+</body>
+</html>
