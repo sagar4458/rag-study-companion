@@ -1,5 +1,5 @@
 """
-RAG Study Companion - Flask Backend (v2) FIXED
+RAG Study Companion - Flask Backend (v3) with Cloud Embeddings
 Private AI study assistant with intelligent LLM fallback
 
 RUN LOCALLY:
@@ -7,8 +7,9 @@ RUN LOCALLY:
 
 PRODUCTION:
   Set environment variables:
-  - GROQ_API_KEY (optional, for cloud fallback)
-  - GEMINI_API_KEY (optional, for cloud fallback)
+  - HUGGINGFACE_API_TOKEN (for embeddings)
+  - GROQ_API_KEY (for LLM)
+  - GEMINI_API_KEY (optional, fallback)
 
 PORT: 5001
 """
@@ -82,7 +83,8 @@ def query():
             "answer": result["answer"],
             "sources": result["sources"],
             "chunks_used": result["chunks_used"],
-            "mode": result.get("mode", "unknown"),
+            "embed_mode": result.get("embed_mode", "unknown"),
+            "llm_mode": result.get("llm_mode", "unknown"),
         }), 200
     except Exception as e:
         return jsonify({"error": f"Query failed: {str(e)}"}), 500
@@ -117,8 +119,8 @@ def stats():
         return jsonify({
             "total_chunks": count,
             "documents": docs,
-            "embed_model": "nomic-embed-text",
-            "llm": "Llama 3 8B (local) + Groq (fallback)",
+            "embed_model": "HuggingFace (cloud) or Ollama (local)",
+            "llm": "Groq or Gemini (cloud)",
             "top_k": 5,
             "similarity_cutoff": 0.72,
         }), 200
@@ -129,43 +131,45 @@ def stats():
 @app.route("/api/status", methods=["GET"])
 def status():
     """
-    Check LLM providers and current mode.
+    Check embedding and LLM providers.
     
     Response:
     {
-        "mode": "ollama" | "groq" | "gemini",
-        "ollama": true/false,
-        "groq": true/false,
-        "gemini": true/false,
+        "embedding_mode": "ollama" | "huggingface",
+        "llm_mode": "groq" | "gemini",
+        "providers": {
+            "ollama_available": true/false,
+            "huggingface_available": true/false,
+            "groq_available": true/false,
+            "gemini_available": true/false
+        },
         "message": "Status message"
     }
     """
     try:
-        llm_status = rag.get_status()
+        status_info = rag.get_status()
         
         # Build human-readable message
-        if llm_status["mode"] == "ollama":
-            message = "✓ Running in OFFLINE mode (Ollama local)"
-        elif llm_status["mode"] == "groq":
-            message = "✓ Running with Groq API (cloud)"
-        elif llm_status["mode"] == "gemini":
-            message = "✓ Running with Gemini API (cloud)"
-        else:
-            message = "⚠ Fallback mode - limited functionality"
+        embed_msg = f"✓ {status_info['embedding_mode'].upper()}" if status_info['embedding_mode'] != "none" else "✗ No embeddings"
+        llm_msg = f"✓ {status_info['llm_mode'].upper()}" if status_info['llm_mode'] != "none" else "✗ No LLM"
+        
+        message = f"{embed_msg} | {llm_msg}"
         
         return jsonify({
-            "mode": llm_status["mode"],
-            "offline": llm_status["ollama"],
+            "embedding_mode": status_info["embedding_mode"],
+            "llm_mode": status_info["llm_mode"],
             "providers": {
-                "ollama": llm_status["ollama"],
-                "groq": llm_status["groq"],
-                "gemini": llm_status["gemini"],
+                "ollama": status_info["ollama_available"],
+                "huggingface": status_info["huggingface_available"],
+                "groq": status_info["groq_available"],
+                "gemini": status_info["gemini_available"],
             },
             "message": message,
         }), 200
     except Exception as e:
         return jsonify({
-            "mode": "error",
+            "embedding_mode": "error",
+            "llm_mode": "error",
             "error": str(e),
             "message": "Could not determine status"
         }), 500
@@ -183,18 +187,19 @@ def server_error(e):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("📚 RAG Study Companion")
+    print("📚 RAG Study Companion with Cloud Embeddings")
     print("=" * 60)
     print("Dashboard: http://localhost:5001")
     print("=" * 60)
-    print("\n🔄 To use LOCAL mode (offline):")
+    print("\n🔄 To use LOCAL mode (Ollama embeddings):")
     print("   1. Install Ollama: https://ollama.ai")
     print("   2. Run: ollama serve")
     print("   3. Pull models: ollama pull llama3.2:3b nomic-embed-text")
-    print("\n☁️  To use CLOUD mode (fallback):")
+    print("\n☁️  To use CLOUD mode (HuggingFace embeddings):")
     print("   Set environment variables:")
+    print("   - export HUGGINGFACE_API_TOKEN=<your-token>")
     print("   - export GROQ_API_KEY=<your-key>")
-    print("   - export GEMINI_API_KEY=<your-key>")
+    print("   - export GEMINI_API_KEY=<your-key> (optional)")
     print("=" * 60 + "\n")
     
     app.run(debug=True, host="0.0.0.0", port=5001, threaded=True)
