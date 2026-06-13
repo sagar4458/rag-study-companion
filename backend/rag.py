@@ -1,11 +1,16 @@
 """
-RAG Pipeline — Core Logic (v2) FIXED
+RAG Pipeline — Core Logic (v3) with Cloud Embeddings
 PDF ingestion → chunking → embedding → ChromaDB storage → retrieval → LLM generation
 
 INTELLIGENT FALLBACK:
-1. Try local Ollama (offline mode) ← preferred
-2. Fallback to Groq API (14,400 req/day free)
-3. Fallback to Gemini API (1,500 req/day free)
+Embeddings:
+1. Try local Ollama (offline)
+2. Fallback to HuggingFace Inference API (cloud)
+
+Generation:
+1. Try local Ollama (offline)
+2. Fallback to Groq API
+3. Fallback to Gemini API
 """
 
 import os
@@ -22,27 +27,46 @@ from prompts import SYSTEM_PROMPT
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
 OLLAMA_BASE = "http://localhost:11434"
+HUGGINGFACE_API = "https://api-inference.huggingface.co/pipeline/feature-extraction"
 
 # ────────────────────────────────────────────────────────────
-# 1. DETECT AVAILABLE LLM PROVIDERS
+# 1. DETECT AVAILABLE EMBEDDING PROVIDERS
 # ────────────────────────────────────────────────────────────
 
 OLLAMA_AVAILABLE = False
-GROQ_AVAILABLE = False
-GEMINI_AVAILABLE = False
-groq_client = None
-gemini_client = None
+HUGGINGFACE_AVAILABLE = False
 
 # Try Ollama (local)
 try:
     resp = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=2)
     if resp.status_code == 200:
         OLLAMA_AVAILABLE = True
-        print("✓ Ollama detected (local mode)")
+        print("✓ Ollama detected (local embeddings)")
     else:
         print("⚠ Ollama not responding")
 except Exception:
-    print("⚠ Ollama not available — will use cloud fallback")
+    print("⚠ Ollama not available — will use cloud embeddings")
+
+# Try HuggingFace (cloud)
+hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
+if hf_token:
+    HUGGINGFACE_AVAILABLE = True
+    print("✓ HuggingFace API configured (cloud embeddings)")
+else:
+    print("⚠ HUGGINGFACE_API_TOKEN not found (embeddings will fail on Render)")
+
+print(f"\n📡 Embedding Configuration:")
+print(f"   Ollama (local): {'✓' if OLLAMA_AVAILABLE else '✗'}")
+print(f"   HuggingFace (cloud): {'✓' if HUGGINGFACE_AVAILABLE else '✗'}\n")
+
+# ────────────────────────────────────────────────────────────
+# 2. DETECT AVAILABLE LLM GENERATION PROVIDERS
+# ────────────────────────────────────────────────────────────
+
+GROQ_AVAILABLE = False
+GEMINI_AVAILABLE = False
+groq_client = None
+gemini_client = None
 
 # Try Groq (cloud)
 try:
@@ -55,7 +79,7 @@ try:
     else:
         print("⚠ GROQ_API_KEY not found")
 except ImportError:
-    print("⚠ Groq package not installed (install: pip install groq)")
+    print("⚠ Groq package not installed")
 except Exception as e:
     print(f"⚠ Groq error: {e}")
 
@@ -70,23 +94,26 @@ try:
     else:
         print("⚠ GEMINI_API_KEY not found")
 except ImportError:
-    print("⚠ Google GenAI package not installed (install: pip install google-generativeai)")
+    print("⚠ Google GenAI package not installed")
 except Exception as e:
     print(f"⚠ Gemini error: {e}")
 
 print(f"\n📡 LLM Configuration:")
-print(f"   Ollama (local): {'✓' if OLLAMA_AVAILABLE else '✗'}")
 print(f"   Groq (cloud):   {'✓' if GROQ_AVAILABLE else '✗'}")
 print(f"   Gemini (cloud): {'✓' if GEMINI_AVAILABLE else '✗'}\n")
 
-if not (OLLAMA_AVAILABLE or GROQ_AVAILABLE or GEMINI_AVAILABLE):
-    print("⚠️  WARNING: No LLM available!")
-    print("   Set GROQ_API_KEY or GEMINI_API_KEY for cloud mode")
+if not (OLLAMA_AVAILABLE or HUGGINGFACE_AVAILABLE):
+    print("⚠️  WARNING: No embedding provider available!")
+    print("   Set HUGGINGFACE_API_TOKEN for cloud mode")
     print("   Or install Ollama: https://ollama.ai\n")
+
+if not (GROQ_AVAILABLE or GEMINI_AVAILABLE):
+    print("⚠️  WARNING: No LLM provider available!")
+    print("   Set GROQ_API_KEY or GEMINI_API_KEY\n")
 
 
 # ────────────────────────────────────────────────────────────
-# 2. RAG PIPELINE CLASS
+# 3. RAG PIPELINE CLASS
 # ────────────────────────────────────────────────────────────
 
 class RAGPipeline:
@@ -101,8 +128,26 @@ class RAGPipeline:
             name="study_docs",
             metadata={"hnsw:space": "cosine"}
         )
-        self.mode = "ollama" if OLLAMA_AVAILABLE else "cloud"
-        print(f"RAG initialized in {self.mode.upper()} mode")
+        
+        # Determine embedding mode
+        if OLLAMA_AVAILABLE:
+            self.embed_mode = "ollama"
+        elif HUGGINGFACE_AVAILABLE:
+            self.embed_mode = "huggingface"
+        else:
+            self.embed_mode = "none"
+        
+        # Determine LLM mode
+        if GROQ_AVAILABLE:
+            self.llm_mode = "groq"
+        elif GEMINI_AVAILABLE:
+            self.llm_mode = "gemini"
+        else:
+            self.llm_mode = "none"
+        
+        print(f"RAG initialized:")
+        print(f"  Embeddings: {self.embed_mode.upper()}")
+        print(f"  LLM: {self.llm_mode.upper()}")
 
     # ── PDF INGESTION ────────────────────────────────────────────────────────
 
@@ -171,21 +216,51 @@ class RAGPipeline:
     # ── EMBEDDINGS ───────────────────────────────────────────────────────────
 
     def _embed(self, text: str) -> List[float]:
-        """Get embedding from Ollama (local)."""
-        if not OLLAMA_AVAILABLE:
-            raise Exception("Ollama not available for embeddings")
+        """
+        Get embedding with intelligent fallback:
+        1. Try Ollama (local)
+        2. Try HuggingFace (cloud)
+        """
         
-        try:
-            resp = requests.post(
-                f"{OLLAMA_BASE}/api/embeddings",
-                json={"model": EMBED_MODEL, "prompt": text},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json()["embedding"]
-        except Exception as e:
-            print(f"✗ Embedding failed: {e}")
-            raise
+        # STRATEGY 1: Try Ollama (local, offline)
+        if OLLAMA_AVAILABLE:
+            try:
+                resp = requests.post(
+                    f"{OLLAMA_BASE}/api/embeddings",
+                    json={"model": EMBED_MODEL, "prompt": text},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json()["embedding"]
+            except Exception as e:
+                print(f"⚠ Ollama embedding failed: {e}")
+        
+        # STRATEGY 2: Fallback to HuggingFace (cloud)
+        if HUGGINGFACE_AVAILABLE:
+            try:
+                hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
+                headers = {"Authorization": f"Bearer {hf_token}"}
+                resp = requests.post(
+                    HUGGINGFACE_API,
+                    headers=headers,
+                    json={"inputs": text},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                
+                # HuggingFace returns list of embeddings
+                if isinstance(data, list) and len(data) > 0:
+                    return data[0]
+                return data
+            except Exception as e:
+                print(f"⚠ HuggingFace embedding failed: {e}")
+        
+        # FALLBACK: If all fail
+        raise Exception(
+            "No embedding provider available! "
+            "Set HUGGINGFACE_API_TOKEN or install Ollama"
+        )
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of texts."""
@@ -256,15 +331,15 @@ Answer:"""
             "sources"       : sources,
             "chunks_used"   : len(docs),
             "total_chunks"  : count,
-            "mode"          : self.mode,
+            "embed_mode"    : self.embed_mode,
+            "llm_mode"      : self.llm_mode,
         }
 
     def _generate(self, prompt: str) -> str:
         """
         Generate a response with intelligent fallback:
-        1. Try Ollama (local, offline)
-        2. Try Groq (cloud, free tier)
-        3. Try Gemini (cloud, free tier)
+        1. Try Groq (cloud, free tier)
+        2. Try Gemini (cloud, free tier)
         """
 
         # Truncate prompt if too long
@@ -272,60 +347,29 @@ Answer:"""
         if len(prompt) > max_chars:
             prompt = prompt[:max_chars] + "\n\n[Context truncated]\n\nAnswer:"
 
-        # STRATEGY 1: Try Ollama first (local, offline)
-        if OLLAMA_AVAILABLE:
-            try:
-                print("→ Generating with Ollama (local)...")
-                resp = requests.post(
-                    f"{OLLAMA_BASE}/api/generate",
-                    json={
-                        "model" : LLM_MODEL,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature" : 0.3,
-                            "top_p"       : 0.9,
-                            "num_predict" : 600,
-                            "num_ctx"     : 4096,
-                            "stop"        : ["Person:", "Human:", "User:"],
-                        }
-                    },
-                    timeout=180,
-                )
-                if resp.status_code == 200:
-                    self.mode = "ollama"
-                    print("✓ Ollama response")
-                    return resp.json().get("response", "").strip()
-                else:
-                    print(f"⚠ Ollama failed: {resp.status_code}")
-            except Exception as e:
-                print(f"⚠ Ollama error: {e}")
-
-        # STRATEGY 2: Fallback to Groq (cloud)
+        # STRATEGY 1: Fallback to Groq (cloud)
         if GROQ_AVAILABLE and groq_client:
             try:
-                print("→ Generating with Groq (cloud)...")
+                print("→ Generating with Groq...")
                 response = groq_client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=600,
                 )
-                self.mode = "groq"
                 print("✓ Groq response")
                 return response.choices[0].message.content.strip()
             except Exception as e:
                 print(f"⚠ Groq error: {e}")
 
-        # STRATEGY 3: Fallback to Gemini (cloud)
+        # STRATEGY 2: Fallback to Gemini (cloud)
         if GEMINI_AVAILABLE and gemini_client:
             try:
-                print("→ Generating with Gemini (cloud)...")
+                print("→ Generating with Gemini...")
                 response = gemini_client.models.generate_content(
                     model="gemini-1.5-flash",
                     contents=prompt,
                 )
-                self.mode = "gemini"
                 print("✓ Gemini response")
                 return response.text.strip()
             except Exception as e:
@@ -336,9 +380,8 @@ Answer:"""
         return (
             "Sorry, I couldn't generate a response right now. "
             "Please ensure:\n"
-            "1. Ollama is running (ollama serve), OR\n"
-            "2. Set GROQ_API_KEY environment variable, OR\n"
-            "3. Set GEMINI_API_KEY environment variable"
+            "1. Set GROQ_API_KEY environment variable, OR\n"
+            "2. Set GEMINI_API_KEY environment variable"
         )
 
     # ── UTILITIES ─────────────────────────────────────────────────────────────
@@ -368,10 +411,12 @@ Answer:"""
             return False
 
     def get_status(self) -> Dict:
-        """Get status of all LLM providers."""
+        """Get status of all providers."""
         return {
-            "ollama": OLLAMA_AVAILABLE,
-            "groq": GROQ_AVAILABLE,
-            "gemini": GEMINI_AVAILABLE,
-            "mode": self.mode,
+            "embedding_mode": self.embed_mode,
+            "llm_mode": self.llm_mode,
+            "ollama_available": OLLAMA_AVAILABLE,
+            "huggingface_available": HUGGINGFACE_AVAILABLE,
+            "groq_available": GROQ_AVAILABLE,
+            "gemini_available": GEMINI_AVAILABLE,
         }
