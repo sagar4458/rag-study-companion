@@ -27,7 +27,9 @@ from prompts import SYSTEM_PROMPT
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
 OLLAMA_BASE = "http://localhost:11434"
-HUGGINGFACE_API = "https://api-inference.huggingface.co/pipeline/feature-extraction"
+# HuggingFace embeddings API
+HUGGINGFACE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+HUGGINGFACE_API = f"https://api-inference.huggingface.co/models/{HUGGINGFACE_MODEL}"
 
 # ────────────────────────────────────────────────────────────
 # 1. DETECT AVAILABLE EMBEDDING PROVIDERS
