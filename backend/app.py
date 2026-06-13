@@ -1,5 +1,5 @@
 """
-RAG Study Companion - Flask Backend (v2)
+RAG Study Companion - Flask Backend (v2) FIXED
 Private AI study assistant with intelligent LLM fallback
 
 RUN LOCALLY:
@@ -14,7 +14,6 @@ PORT: 5001
 """
 
 import os
-import sys
 from flask import Flask, render_template, request, jsonify
 from rag import RAGPipeline
 
@@ -156,7 +155,7 @@ def status():
         
         return jsonify({
             "mode": llm_status["mode"],
-            "offline": llm_status["ollama"],  # Is it running offline?
+            "offline": llm_status["ollama"],
             "providers": {
                 "ollama": llm_status["ollama"],
                 "groq": llm_status["groq"],
