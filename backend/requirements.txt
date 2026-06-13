@@ -1,7 +1,13 @@
+# Core dependencies
 flask
 pymupdf
 chromadb
 requests
 python-dotenv
+
+# Cloud LLM support (for text generation)
 groq>=0.10.0
 google-generativeai>=0.3.0
+
+# Note: HuggingFace API uses requests (already included above)
+# No additional packages needed for cloud embeddings!
