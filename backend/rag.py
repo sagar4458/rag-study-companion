@@ -1,233 +1,205 @@
 """
-RAG Pipeline — Core Logic
-PDF ingestion → chunking → embedding → ChromaDB storage → retrieval → Llama3 generation
+RAG Study Companion - Flask Backend (v2)
+Private AI study assistant with intelligent LLM fallback
+
+RUN LOCALLY:
+  python backend/app.py
+
+PRODUCTION:
+  Set environment variables:
+  - GROQ_API_KEY (optional, for cloud fallback)
+  - GEMINI_API_KEY (optional, for cloud fallback)
+
+PORT: 5001
 """
 
 import os
-import requests
-from config import *
-from prompts import SYSTEM_PROMPT
-import fitz  # PyMuPDF
-import chromadb
-from chromadb.config import Settings
-from typing import List, Dict, Any
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from flask import Flask, render_template, request, jsonify
+from rag import RAGPipeline
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
-OLLAMA_BASE = "http://localhost:11434"
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'frontend'),
+    static_folder=os.path.join(BASE_DIR, 'frontend'),
+)
+
+# Initialize RAG pipeline
+print("Initializing RAG pipeline...")
+rag = RAGPipeline()
 
 
-class RAGPipeline:
+@app.route("/")
+def index():
+    """Serve the main UI."""
+    try:
+        return render_template("index.html")
+    except Exception as e:
+        return jsonify({"error": f"UI load failed: {str(e)}"}), 500
 
-    def __init__(self):
-        os.makedirs(VECTORSTORE_DIR, exist_ok=True)
-        self.client = chromadb.PersistentClient(
-            path=VECTORSTORE_DIR,
-            settings=Settings(anonymized_telemetry=False)
-        )
-        self.collection = self.client.get_or_create_collection(
-            name="study_docs",
-            metadata={"hnsw:space": "cosine"}
-        )
 
-    # ── PDF INGESTION ────────────────────────────────────────────────────────
+@app.route("/api/upload", methods=["POST"])
+def upload():
+    """Upload and ingest a PDF into the vector store."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
 
-    def ingest_pdf(self, filepath: str) -> Dict:
-        """Extract text from PDF, chunk it, embed and store in ChromaDB."""
-        filename = os.path.basename(filepath)
-        text = self._extract_text(filepath)
-        chunks = self._chunk_text(text, filename)
-        embeddings = self._embed_batch([c["text"] for c in chunks])
+    file = request.files["file"]
+    if not file.filename.endswith(".pdf"):
+        return jsonify({"error": "Only PDF files are supported"}), 400
 
-        ids        = [c["id"]       for c in chunks]
-        documents  = [c["text"]     for c in chunks]
-        metadatas  = [c["metadata"] for c in chunks]
+    # Save uploaded file
+    upload_dir = os.path.join(BASE_DIR, "data", "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, file.filename)
+    
+    try:
+        file.save(filepath)
+        result = rag.ingest_pdf(filepath)
+        return jsonify({
+            "success": True,
+            "filename": file.filename,
+            "chunks": result["chunks"],
+            "message": f"✓ Ingested {result['chunks']} chunks from {file.filename}"
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
-        # Remove existing docs from this file before re-ingesting
-        existing = self.collection.get(where={"source": filename})
-        if existing["ids"]:
-            self.collection.delete(ids=existing["ids"])
 
-        self.collection.add(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+@app.route("/api/query", methods=["POST"])
+def query():
+    """Query the RAG pipeline with a question."""
+    data = request.get_json()
+    question = (data.get("question") or "").strip()
 
-        return {"chunks": len(chunks), "filename": filename}
+    if not question:
+        return jsonify({"error": "Empty question"}), 400
 
-    def _extract_text(self, filepath: str) -> str:
-        """Extract all text from a PDF using PyMuPDF."""
-        doc = fitz.open(filepath)
-        pages = []
-        for page_num, page in enumerate(doc):
-            text = page.get_text("text")
-            if text.strip():
-                pages.append(f"[Page {page_num + 1}]\n{text}")
-        doc.close()
-        return "\n\n".join(pages)
+    try:
+        result = rag.query(question)
+        return jsonify({
+            "answer": result["answer"],
+            "sources": result["sources"],
+            "chunks_used": result["chunks_used"],
+            "mode": result.get("mode", "unknown"),
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Query failed: {str(e)}"}), 500
 
-    def _chunk_text(self, text: str, source: str) -> List[Dict]:
-        """Split text into overlapping chunks."""
-        chunks = []
-        start = 0
-        idx = 0
 
-        while start < len(text):
-            end = start + CHUNK_SIZE
-            chunk_text = text[start:end].strip()
+@app.route("/api/documents", methods=["GET"])
+def documents():
+    """List all ingested documents."""
+    try:
+        docs = rag.list_documents()
+        return jsonify({"documents": docs, "count": len(docs)}), 200
+    except Exception as e:
+        return jsonify({"documents": [], "count": 0, "error": str(e)}), 200
 
-            if chunk_text:
-                chunks.append({
-                    "id"      : f"{source}_{idx:04d}",
-                    "text"    : chunk_text,
-                    "metadata": {
-                        "source": source,
-                        "chunk" : idx,
-                        "start" : start,
-                    }
-                })
-                idx += 1
 
-            start = end - CHUNK_OVERLAP
+@app.route("/api/clear", methods=["POST"])
+def clear():
+    """Clear all documents from vector store."""
+    try:
+        rag.clear()
+        return jsonify({"success": True, "message": "All documents cleared"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-        return chunks
 
-    # ── EMBEDDINGS ───────────────────────────────────────────────────────────
+@app.route("/api/stats", methods=["GET"])
+def stats():
+    """Stats endpoint for frontend."""
+    try:
+        docs = rag.list_documents()
+        count = rag.collection.count()
+        return jsonify({
+            "total_chunks": count,
+            "documents": docs,
+            "embed_model": "nomic-embed-text",
+            "llm": "Llama 3 8B (local) + Groq (fallback)",
+            "top_k": 5,
+            "similarity_cutoff": 0.72,
+        }), 200
+    except Exception as e:
+        return jsonify({"total_chunks": 0, "documents": [], "error": str(e)}), 200
 
-    def _embed(self, text: str) -> List[float]:
-        """Get embedding for a single text from Ollama."""
-        resp = requests.post(
-            f"{OLLAMA_BASE}/api/embeddings",
-            json={"model": EMBED_MODEL, "prompt": text},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["embedding"]
 
-    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts."""
-        return [self._embed(t) for t in texts]
-
-    # ── QUERY ────────────────────────────────────────────────────────────────
-
-    def query(self, question: str) -> Dict[str, Any]:
-        """Retrieve relevant chunks and generate an answer with Llama3."""
-
-        # Check if any documents are ingested
-        try:
-            count = self.collection.count()
-        except Exception:
-            count = 0
-
-        if count == 0:
-            return {
-                "answer"     : "No documents have been uploaded yet. Please upload a PDF first.",
-                "sources"    : [],
-                "chunks_used": 0,
-            }
-
-        # Embed the question
-        q_embedding = self._embed(question)
-
-        # Retrieve top-k relevant chunks
-        results = self.collection.query(
-            query_embeddings=[q_embedding],
-            n_results=min(TOP_K, count),
-            include=["documents", "metadatas", "distances"],
-        )
-
-        docs      = results["documents"][0]
-        metadatas = results["metadatas"][0]
-        distances = results["distances"][0]
-
-        # Build context from retrieved chunks
-        context_parts = []
-        sources = []
-        for i, (doc, meta, dist) in enumerate(zip(docs, metadatas, distances)):
-            context_parts.append(f"[Excerpt {i+1} from {meta['source']}]\n{doc}")
-            source_entry = {
-                "file"      : meta["source"],
-                "chunk"     : meta["chunk"],
-                "relevance" : round((1 - dist) * 100, 1),
-            }
-            if source_entry not in sources:
-                sources.append(source_entry)
-
-        context = "\n\n---\n\n".join(context_parts)
-
-        # Build prompt
-        prompt = f"""
-{SYSTEM_PROMPT}
-
-Document excerpts:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-        # Generate answer with Llama3
-        answer = self._generate(prompt)
-
-        return {
-            "answer"        : answer,
-            "sources"       : sources,
-            "chunks_used"   : len(docs),
-            "total_chunks"  : count,
-        }
-
-    def _generate(self, prompt: str) -> str:
-        """Generate a response using Llama3 via Ollama."""
-        # Truncate prompt if too long to avoid context overflow
-        max_chars = 12000
-        if len(prompt) > max_chars:
-            prompt = prompt[:max_chars] + "\n\n[Context truncated]\n\nAnswer:"
-
-        resp = requests.post(
-            f"{OLLAMA_BASE}/api/generate",
-            json={
-                "model" : LLM_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature" : 0.3,
-                    "top_p"       : 0.9,
-                    "num_predict" : 600,
-                    "num_ctx"     : 4096,
-                    "stop"        : ["Person:", "Human:", "User:"],
-                }
+@app.route("/api/status", methods=["GET"])
+def status():
+    """
+    Check LLM providers and current mode.
+    
+    Response:
+    {
+        "mode": "ollama" | "groq" | "gemini",
+        "ollama": true/false,
+        "groq": true/false,
+        "gemini": true/false,
+        "message": "Status message"
+    }
+    """
+    try:
+        llm_status = rag.get_status()
+        
+        # Build human-readable message
+        if llm_status["mode"] == "ollama":
+            message = "✓ Running in OFFLINE mode (Ollama local)"
+        elif llm_status["mode"] == "groq":
+            message = "✓ Running with Groq API (cloud)"
+        elif llm_status["mode"] == "gemini":
+            message = "✓ Running with Gemini API (cloud)"
+        else:
+            message = "⚠ Fallback mode - limited functionality"
+        
+        return jsonify({
+            "mode": llm_status["mode"],
+            "offline": llm_status["ollama"],  # Is it running offline?
+            "providers": {
+                "ollama": llm_status["ollama"],
+                "groq": llm_status["groq"],
+                "gemini": llm_status["gemini"],
             },
-            timeout=180,
-        )
-        if resp.status_code != 200:
-            raise Exception(f"Ollama generate failed: {resp.status_code} — {resp.text[:200]}")
-        data = resp.json()
-        return data.get("response", "").strip()
+            "message": message,
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "mode": "error",
+            "error": str(e),
+            "message": "Could not determine status"
+        }), 500
 
-    # ── UTILITIES ─────────────────────────────────────────────────────────────
 
-    def list_documents(self) -> List[str]:
-        """List all unique source documents in the vector store."""
-        if self.collection.count() == 0:
-            return []
-        results = self.collection.get(include=["metadatas"])
-        sources = list({m["source"] for m in results["metadatas"]})
-        return sorted(sources)
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Endpoint not found"}), 404
 
-    def clear(self):
-        """Delete all documents from the vector store."""
-        self.client.delete_collection("study_docs")
-        self.collection = self.client.get_or_create_collection(
-            name="study_docs",
-            metadata={"hnsw:space": "cosine"}
-        )
 
-    def check_ollama(self) -> bool:
-        """Check if Ollama is running."""
-        try:
-            resp = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=5)
-            return resp.status_code == 200
-        except Exception:
-            return False
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"error": "Internal server error"}), 500
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("📚 RAG Study Companion")
+    print("=" * 60)
+    print("Dashboard: http://localhost:5001")
+    print("=" * 60)
+    print("\n🔄 To use LOCAL mode (offline):")
+    print("   1. Install Ollama: https://ollama.ai")
+    print("   2. Run: ollama serve")
+    print("   3. Pull models: ollama pull llama3.2:3b nomic-embed-text")
+    print("\n☁️  To use CLOUD mode (fallback):")
+    print("   Set environment variables:")
+    print("   - export GROQ_API_KEY=<your-key>")
+    print("   - export GEMINI_API_KEY=<your-key>")
+    print("=" * 60 + "\n")
+    
+    app.run(debug=True, host="0.0.0.0", port=5001, threaded=True)
