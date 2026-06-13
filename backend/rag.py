@@ -1,15 +1,8 @@
 """
-RAG Pipeline — Core Logic (v3) with Cloud Embeddings - DETAILED DEBUG
+RAG Pipeline — Core Logic with Local Sentence-Transformers
 PDF ingestion → chunking → embedding → ChromaDB storage → retrieval → LLM generation
 
-INTELLIGENT FALLBACK:
-Embeddings:
-1. Try local Ollama (offline)
-2. Fallback to HuggingFace Inference API (cloud)
-
-Generation:
-1. Try Groq API
-2. Try Gemini API
+Uses sentence-transformers locally (no API calls needed!)
 """
 
 import os
@@ -25,42 +18,32 @@ from prompts import SYSTEM_PROMPT
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
-OLLAMA_BASE = "http://localhost:11434"
-# HuggingFace embeddings API
-HUGGINGFACE_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-HUGGINGFACE_API = f"https://api-inference.huggingface.co/models/{HUGGINGFACE_MODEL}"
 
 # ────────────────────────────────────────────────────────────
 # 1. DETECT AVAILABLE EMBEDDING PROVIDERS
 # ────────────────────────────────────────────────────────────
 
-OLLAMA_AVAILABLE = False
-HUGGINGFACE_AVAILABLE = False
+EMBEDDING_MODEL = None
+embedding_available = False
 
-# Try Ollama (local)
+# Try sentence-transformers (local)
 try:
-    resp = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=2)
-    if resp.status_code == 200:
-        OLLAMA_AVAILABLE = True
-        print("✓ Ollama detected (local embeddings)")
-    else:
-        print("⚠ Ollama not responding")
-except Exception:
-    print("⚠ Ollama not available — will use cloud embeddings")
-
-# Try HuggingFace (cloud)
-hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
-if hf_token:
-    HUGGINGFACE_AVAILABLE = True
-    print(f"✓ HuggingFace API configured (token length: {len(hf_token)})")
-    print(f"  Model: {HUGGINGFACE_MODEL}")
-    print(f"  Endpoint: {HUGGINGFACE_API}")
-else:
-    print("⚠ HUGGINGFACE_API_TOKEN not found (embeddings will fail)")
+    from sentence_transformers import SentenceTransformer
+    print("✓ Loading sentence-transformers...")
+    EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    embedding_available = True
+    print("✓ Sentence-Transformers loaded (local embeddings)")
+except ImportError:
+    print("⚠ sentence-transformers not installed")
+except Exception as e:
+    print(f"⚠ Failed to load sentence-transformers: {e}")
 
 print(f"\n📡 Embedding Configuration:")
-print(f"   Ollama (local): {'✓' if OLLAMA_AVAILABLE else '✗'}")
-print(f"   HuggingFace (cloud): {'✓' if HUGGINGFACE_AVAILABLE else '✗'}\n")
+print(f"   Local (sentence-transformers): {'✓' if embedding_available else '✗'}\n")
+
+if not embedding_available:
+    print("⚠️  WARNING: No embedding provider available!")
+    print("   Install sentence-transformers: pip install sentence-transformers\n")
 
 # ────────────────────────────────────────────────────────────
 # 2. DETECT AVAILABLE LLM GENERATION PROVIDERS
@@ -105,6 +88,10 @@ print(f"\n📡 LLM Configuration:")
 print(f"   Groq (cloud):   {'✓' if GROQ_AVAILABLE else '✗'}")
 print(f"   Gemini (cloud): {'✓' if GEMINI_AVAILABLE else '✗'}\n")
 
+if not (GROQ_AVAILABLE or GEMINI_AVAILABLE):
+    print("⚠️  WARNING: No LLM provider available!")
+    print("   Set GROQ_API_KEY or GEMINI_API_KEY\n")
+
 
 # ────────────────────────────────────────────────────────────
 # 3. RAG PIPELINE CLASS
@@ -124,10 +111,8 @@ class RAGPipeline:
         )
         
         # Determine embedding mode
-        if OLLAMA_AVAILABLE:
-            self.embed_mode = "ollama"
-        elif HUGGINGFACE_AVAILABLE:
-            self.embed_mode = "huggingface"
+        if embedding_available:
+            self.embed_mode = "local"
         else:
             self.embed_mode = "none"
         
@@ -217,87 +202,40 @@ class RAGPipeline:
 
     def _embed(self, text: str) -> List[float]:
         """
-        Get embedding with intelligent fallback:
-        1. Try Ollama (local)
-        2. Try HuggingFace (cloud)
+        Get embedding using sentence-transformers (local)
         """
         
-        # STRATEGY 1: Try Ollama (local, offline)
-        if OLLAMA_AVAILABLE:
-            try:
-                resp = requests.post(
-                    f"{OLLAMA_BASE}/api/embeddings",
-                    json={"model": EMBED_MODEL, "prompt": text},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                return resp.json()["embedding"]
-            except Exception as e:
-                print(f"   ⚠ Ollama embedding failed: {e}")
+        if not embedding_available or EMBEDDING_MODEL is None:
+            raise Exception("Embedding model not available!")
         
-        # STRATEGY 2: Fallback to HuggingFace (cloud)
-        if HUGGINGFACE_AVAILABLE:
-            try:
-                print(f"   → Calling HuggingFace API...")
-                hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
-                headers = {"Authorization": f"Bearer {hf_token}"}
-                
-                # Log request details
-                print(f"   → POST {HUGGINGFACE_API}")
-                print(f"   → Headers: Authorization: Bearer [token]")
-                print(f"   → Body: {{'inputs': text[:50]}}...")
-                
-                resp = requests.post(
-                    HUGGINGFACE_API,
-                    headers=headers,
-                    json={"inputs": text},
-                    timeout=60,
-                )
-                
-                print(f"   → Response status: {resp.status_code}")
-                
-                if resp.status_code != 200:
-                    print(f"   ✗ HuggingFace API error!")
-                    print(f"   ✗ Status: {resp.status_code}")
-                    print(f"   ✗ Response: {resp.text[:500]}")
-                    resp.raise_for_status()
-                
-                data = resp.json()
-                print(f"   ✓ Got response from HuggingFace")
-                
-                # HuggingFace returns list of embeddings
-                if isinstance(data, list) and len(data) > 0:
-                    if isinstance(data[0], list):
-                        print(f"   ✓ Embedding dimension: {len(data[0])}")
-                        return data[0]
-                    elif isinstance(data[0], float):
-                        print(f"   ✓ Embedding dimension: {len(data)}")
-                        return data
-                
-                print(f"   ⚠ Unexpected response type: {type(data)}")
-                print(f"   ⚠ Response: {str(data)[:200]}")
-                return data
-            except Exception as e:
-                print(f"   ✗ HuggingFace API error: {type(e).__name__}")
-                print(f"   ✗ Error message: {str(e)[:300]}")
-        
-        # FALLBACK: If all fail
-        print(f"   ✗✗✗ ALL EMBEDDING PROVIDERS FAILED ✗✗✗")
-        raise Exception(
-            "No embedding provider available! "
-            "Check logs above for detailed error information"
-        )
+        try:
+            # Encode text to embedding
+            embedding = EMBEDDING_MODEL.encode(text, convert_to_numpy=False)
+            return embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
+        except Exception as e:
+            print(f"   ✗ Embedding error: {type(e).__name__}: {str(e)[:200]}")
+            raise Exception(f"Failed to embed text: {str(e)}")
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts."""
+        """Embed a list of texts using batch processing (faster)."""
         print(f"   Embedding {len(texts)} chunks...")
-        embeddings = []
-        for i, t in enumerate(texts):
-            if (i+1) % 5 == 0:
-                print(f"     Progress: {i+1}/{len(texts)}")
-            embeddings.append(self._embed(t))
-        print(f"   ✓ All chunks embedded!")
-        return embeddings
+        
+        if not embedding_available or EMBEDDING_MODEL is None:
+            raise Exception("Embedding model not available!")
+        
+        try:
+            # Use batch encoding for efficiency
+            embeddings = EMBEDDING_MODEL.encode(texts, convert_to_numpy=False)
+            # Convert to list of lists
+            embeddings_list = [
+                emb.tolist() if hasattr(emb, 'tolist') else list(emb) 
+                for emb in embeddings
+            ]
+            print(f"   ✓ All {len(embeddings_list)} chunks embedded!")
+            return embeddings_list
+        except Exception as e:
+            print(f"   ✗ Batch embedding error: {type(e).__name__}: {str(e)[:200]}")
+            raise Exception(f"Failed to embed batch: {str(e)}")
 
     # ── QUERY ────────────────────────────────────────────────────────────────
 
@@ -380,7 +318,7 @@ Answer:"""
         if len(prompt) > max_chars:
             prompt = prompt[:max_chars] + "\n\n[Context truncated]\n\nAnswer:"
 
-        # STRATEGY 1: Fallback to Groq (cloud)
+        # STRATEGY 1: Try Groq (cloud)
         if GROQ_AVAILABLE and groq_client:
             try:
                 print("→ Generating with Groq...")
@@ -395,7 +333,7 @@ Answer:"""
             except Exception as e:
                 print(f"⚠ Groq error: {e}")
 
-        # STRATEGY 2: Fallback to Gemini (cloud)
+        # STRATEGY 2: Try Gemini (cloud)
         if GEMINI_AVAILABLE and gemini_client:
             try:
                 print("→ Generating with Gemini...")
@@ -433,21 +371,12 @@ Answer:"""
             metadata={"hnsw:space": "cosine"}
         )
 
-    def check_ollama(self) -> bool:
-        """Check if Ollama is running."""
-        try:
-            resp = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=5)
-            return resp.status_code == 200
-        except Exception:
-            return False
-
     def get_status(self) -> Dict:
         """Get status of all providers."""
         return {
             "embedding_mode": self.embed_mode,
             "llm_mode": self.llm_mode,
-            "ollama_available": OLLAMA_AVAILABLE,
-            "huggingface_available": HUGGINGFACE_AVAILABLE,
+            "embedding_available": embedding_available,
             "groq_available": GROQ_AVAILABLE,
             "gemini_available": GEMINI_AVAILABLE,
         }
