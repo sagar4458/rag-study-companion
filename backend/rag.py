@@ -1,5 +1,5 @@
 """
-RAG Pipeline — Core Logic (v3) with Cloud Embeddings
+RAG Pipeline — Core Logic (v3) with Cloud Embeddings - DETAILED DEBUG
 PDF ingestion → chunking → embedding → ChromaDB storage → retrieval → LLM generation
 
 INTELLIGENT FALLBACK:
@@ -8,9 +8,8 @@ Embeddings:
 2. Fallback to HuggingFace Inference API (cloud)
 
 Generation:
-1. Try local Ollama (offline)
-2. Fallback to Groq API
-3. Fallback to Gemini API
+1. Try Groq API
+2. Try Gemini API
 """
 
 import os
@@ -53,9 +52,11 @@ except Exception:
 hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
 if hf_token:
     HUGGINGFACE_AVAILABLE = True
-    print("✓ HuggingFace API configured (cloud embeddings)")
+    print(f"✓ HuggingFace API configured (token length: {len(hf_token)})")
+    print(f"  Model: {HUGGINGFACE_MODEL}")
+    print(f"  Endpoint: {HUGGINGFACE_API}")
 else:
-    print("⚠ HUGGINGFACE_API_TOKEN not found (embeddings will fail on Render)")
+    print("⚠ HUGGINGFACE_API_TOKEN not found (embeddings will fail)")
 
 print(f"\n📡 Embedding Configuration:")
 print(f"   Ollama (local): {'✓' if OLLAMA_AVAILABLE else '✗'}")
@@ -104,15 +105,6 @@ print(f"\n📡 LLM Configuration:")
 print(f"   Groq (cloud):   {'✓' if GROQ_AVAILABLE else '✗'}")
 print(f"   Gemini (cloud): {'✓' if GEMINI_AVAILABLE else '✗'}\n")
 
-if not (OLLAMA_AVAILABLE or HUGGINGFACE_AVAILABLE):
-    print("⚠️  WARNING: No embedding provider available!")
-    print("   Set HUGGINGFACE_API_TOKEN for cloud mode")
-    print("   Or install Ollama: https://ollama.ai\n")
-
-if not (GROQ_AVAILABLE or GEMINI_AVAILABLE):
-    print("⚠️  WARNING: No LLM provider available!")
-    print("   Set GROQ_API_KEY or GEMINI_API_KEY\n")
-
 
 # ────────────────────────────────────────────────────────────
 # 3. RAG PIPELINE CLASS
@@ -156,8 +148,12 @@ class RAGPipeline:
     def ingest_pdf(self, filepath: str) -> Dict:
         """Extract text from PDF, chunk it, embed and store in ChromaDB."""
         filename = os.path.basename(filepath)
+        print(f"\n📄 Ingesting PDF: {filename}")
         text = self._extract_text(filepath)
+        print(f"   Extracted {len(text)} characters")
         chunks = self._chunk_text(text, filename)
+        print(f"   Created {len(chunks)} chunks")
+        print(f"   Starting embedding process...")
         embeddings = self._embed_batch([c["text"] for c in chunks])
 
         ids        = [c["id"]       for c in chunks]
@@ -175,6 +171,8 @@ class RAGPipeline:
             embeddings=embeddings,
             metadatas=metadatas,
         )
+        
+        print(f"   ✓ Successfully ingested!")
 
         return {"chunks": len(chunks), "filename": filename}
 
@@ -235,38 +233,71 @@ class RAGPipeline:
                 resp.raise_for_status()
                 return resp.json()["embedding"]
             except Exception as e:
-                print(f"⚠ Ollama embedding failed: {e}")
+                print(f"   ⚠ Ollama embedding failed: {e}")
         
         # STRATEGY 2: Fallback to HuggingFace (cloud)
         if HUGGINGFACE_AVAILABLE:
             try:
+                print(f"   → Calling HuggingFace API...")
                 hf_token = os.environ.get("HUGGINGFACE_API_TOKEN")
                 headers = {"Authorization": f"Bearer {hf_token}"}
+                
+                # Log request details
+                print(f"   → POST {HUGGINGFACE_API}")
+                print(f"   → Headers: Authorization: Bearer [token]")
+                print(f"   → Body: {{'inputs': text[:50]}}...")
+                
                 resp = requests.post(
                     HUGGINGFACE_API,
                     headers=headers,
                     json={"inputs": text},
-                    timeout=30,
+                    timeout=60,
                 )
-                resp.raise_for_status()
+                
+                print(f"   → Response status: {resp.status_code}")
+                
+                if resp.status_code != 200:
+                    print(f"   ✗ HuggingFace API error!")
+                    print(f"   ✗ Status: {resp.status_code}")
+                    print(f"   ✗ Response: {resp.text[:500]}")
+                    resp.raise_for_status()
+                
                 data = resp.json()
+                print(f"   ✓ Got response from HuggingFace")
                 
                 # HuggingFace returns list of embeddings
                 if isinstance(data, list) and len(data) > 0:
-                    return data[0]
+                    if isinstance(data[0], list):
+                        print(f"   ✓ Embedding dimension: {len(data[0])}")
+                        return data[0]
+                    elif isinstance(data[0], float):
+                        print(f"   ✓ Embedding dimension: {len(data)}")
+                        return data
+                
+                print(f"   ⚠ Unexpected response type: {type(data)}")
+                print(f"   ⚠ Response: {str(data)[:200]}")
                 return data
             except Exception as e:
-                print(f"⚠ HuggingFace embedding failed: {e}")
+                print(f"   ✗ HuggingFace API error: {type(e).__name__}")
+                print(f"   ✗ Error message: {str(e)[:300]}")
         
         # FALLBACK: If all fail
+        print(f"   ✗✗✗ ALL EMBEDDING PROVIDERS FAILED ✗✗✗")
         raise Exception(
             "No embedding provider available! "
-            "Set HUGGINGFACE_API_TOKEN or install Ollama"
+            "Check logs above for detailed error information"
         )
 
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of texts."""
-        return [self._embed(t) for t in texts]
+        print(f"   Embedding {len(texts)} chunks...")
+        embeddings = []
+        for i, t in enumerate(texts):
+            if (i+1) % 5 == 0:
+                print(f"     Progress: {i+1}/{len(texts)}")
+            embeddings.append(self._embed(t))
+        print(f"   ✓ All chunks embedded!")
+        return embeddings
 
     # ── QUERY ────────────────────────────────────────────────────────────────
 
@@ -381,9 +412,7 @@ Answer:"""
         print("✗ All LLM providers failed")
         return (
             "Sorry, I couldn't generate a response right now. "
-            "Please ensure:\n"
-            "1. Set GROQ_API_KEY environment variable, OR\n"
-            "2. Set GEMINI_API_KEY environment variable"
+            "Please ensure GROQ_API_KEY or GEMINI_API_KEY is set"
         )
 
     # ── UTILITIES ─────────────────────────────────────────────────────────────
